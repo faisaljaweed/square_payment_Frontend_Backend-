@@ -2,20 +2,21 @@ import { useEffect, useState } from "react";
 
 declare global {
   interface Window {
-    SqPaymentForm: any;
+    Square: any; // New SDK uses `Square` object
   }
 }
 
 const App = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [amount, setAmount] = useState(0);
+  const [card, setCard] = useState<any>(null); // Store card instance
 
   useEffect(() => {
-    // Load the Square Payment Form script dynamically
     const script = document.createElement("script");
-    script.src = "https://sandbox.web.squarecdn.com/v1/square.js"; // Use the correct Square environment URL
+    script.src = "https://sandbox.web.squarecdn.com/v1/square.js";
     script.async = true;
-    script.onload = () => initializeSquarePaymentForm();
+    script.onload = initializeSquarePaymentForm; // Initialize after load
     document.body.appendChild(script);
 
     return () => {
@@ -23,116 +24,81 @@ const App = () => {
     };
   }, []);
 
-  const initializeSquarePaymentForm = () => {
-    if (!window.SqPaymentForm) {
-      console.error("Square Payment Form library not loaded!");
+  const initializeSquarePaymentForm = async () => {
+    if (!window.Square) {
+      console.error("Square SDK not loaded!");
       return;
     }
 
-    const paymentForm = new window.SqPaymentForm({
-      applicationId: "application_id", // Replace with your Sandbox Application ID
-      inputClass: "sq-input",
-      autoBuild: false,
-      cardNumber: {
-        elementId: "sq-card-number",
-        placeholder: "Card Number",
-      },
-      cvv: {
-        elementId: "sq-cvv",
-        placeholder: "CVV",
-      },
-      expirationDate: {
-        elementId: "sq-expiration-date",
-        placeholder: "MM/YY",
-      },
-      postalCode: {
-        elementId: "sq-postal-code",
-        placeholder: "Postal Code",
-      },
-      callbacks: {
-        cardNonceResponseReceived: function (
-          errors: any,
-          nonce: any,
-          cardData: any
-        ) {
-          if (errors) {
-            console.error("Encountered errors:", errors);
-            return;
-          }
+    // Step 1: Initialize Square Payments
+    const payments = window.Square.payments(
+      "sandbox-sq0idb-AZoEdS9k4xgkVQKfpZatqg", // APPLICATION_ID
+      "LWT5PS5KSYDT6" // Add Sandbox LOCATION_ID here
+    );
 
-          console.log("Nonce received:", nonce);
-          // Send nonce to your backend for payment processing
-          handlePayment(nonce);
-        },
-      },
-    });
-
-    paymentForm.build();
-  };
-
-  const handlePayment = async (nonce: any) => {
+    // Step 2: Create Card Component
     try {
-      const response = await fetch("http://localhost:3001/create-payment", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sourceId: nonce,
-          amount: 1000, // Amount in cents (e.g., $10.00 = 1000 cents)
-          name,
-          email,
-        }),
-      });
-
-      const data = await response.json();
-      console.log("Payment Success:", data);
+      const card = await payments.card();
+      await card.attach("#card-container"); // Attach to a container div
+      setCard(card); // Save card instance
     } catch (error) {
-      console.error("Payment Error:", error);
+      console.error("Card setup failed:", error);
     }
   };
 
-  const requestCardNonce = () => {
-    const paymentForm = window.SqPaymentForm.getInstance();
-    if (paymentForm) {
-      paymentForm.requestCardNonce();
+  const handlePayment = async () => {
+    if (!card) return;
+
+    try {
+      // Step 3: Generate Nonce
+      const result = await card.tokenize();
+      if (result.status === "OK") {
+        console.log("Nonce:", result.token);
+        // Send to backend
+        const response = await fetch("http://localhost:3000/create-payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceId: result.token,
+            amount,
+            name,
+            email,
+          }),
+        });
+        console.log("Payment Success:", await response.json());
+      }
+    } catch (error) {
+      console.error("Payment Error:", error);
     }
   };
 
   return (
     <div>
       <h2>Square Payment Form</h2>
-      <div id="form-container">
-        {/* Additional Input Fields */}
-        <div>
-          <label htmlFor="name">Full Name</label>
-          <input
-            type="text"
-            id="name"
-            placeholder="Enter your full name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="email">Email</label>
-          <input
-            type="email"
-            id="email"
-            placeholder="Enter your email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </div>
-
-        {/* Square Payment Form Fields */}
-        <div id="sq-card-number"></div>
-        <div id="sq-expiration-date"></div>
-        <div id="sq-cvv"></div>
-        <div id="sq-postal-code"></div>
+      <div>
+        {/* User Details */}
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name"
+        />
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email"
+        />
+        <input
+          type="number"
+          value={amount}
+          onChange={(e) => setAmount(Number(e.target.value))}
+          placeholder="Amount"
+        />
+        {/* Square Card Container */}
+        <div id="card-container"></div> {/* Changed from multiple divs */}
+        <button onClick={handlePayment}>Pay</button>
       </div>
-
-      <button onClick={requestCardNonce}>Pay</button>
     </div>
   );
 };
